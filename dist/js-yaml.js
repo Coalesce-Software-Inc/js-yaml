@@ -972,7 +972,7 @@
   function resolveYamlOmap(data) {
     if (data === null) return true;
 
-    var objectKeys = [], index, length, pair, pairKey, pairHasKey,
+    var objectKeys = {}, index, length, pair, pairKey, pairHasKey,
         object = data;
 
     for (index = 0, length = object.length; index < length; index += 1) {
@@ -990,8 +990,8 @@
 
       if (!pairHasKey) return false;
 
-      if (objectKeys.indexOf(pairKey) === -1) objectKeys.push(pairKey);
-      else return false;
+      if (_hasOwnProperty$3.call(objectKeys, pairKey)) return false;
+      Object.defineProperty(objectKeys, pairKey, { value: true });
     }
 
     return true;
@@ -1236,6 +1236,7 @@
 
     this.json      = options['json']      || false;
     this.listener  = options['listener']  || null;
+    this.maxTotalMergeKeys = typeof options['maxTotalMergeKeys'] === 'number' ? options['maxTotalMergeKeys'] : 10000;
 
     this.implicitTypes = this.schema.compiledImplicit;
     this.typeMap       = this.schema.compiledTypeMap;
@@ -1245,6 +1246,7 @@
     this.line       = 0;
     this.lineStart  = 0;
     this.lineIndent = 0;
+    this.totalMergeKeys = 0;
 
     // position of first leading tab in the current line,
     // used to make sure there are no tabs in the indentation
@@ -1381,6 +1383,14 @@
     }
   }
 
+  function chargeMergeWork(state) {
+    state.totalMergeKeys += 1;
+
+    if (state.maxTotalMergeKeys !== -1 && state.totalMergeKeys > state.maxTotalMergeKeys) {
+      throwError(state, 'merge keys exceeded maxTotalMergeKeys (' + state.maxTotalMergeKeys + ')');
+    }
+  }
+
   function mergeMappings(state, destination, source, overridableKeys) {
     var sourceKeys, key, index, quantity;
 
@@ -1388,10 +1398,15 @@
       throwError(state, 'cannot merge mappings; the provided source object is unacceptable');
     }
 
+    // Count the source mapping itself to bound sequences of empty mappings.
+    chargeMergeWork(state);
+
     sourceKeys = Object.keys(source);
 
     for (index = 0, quantity = sourceKeys.length; index < quantity; index += 1) {
       key = sourceKeys[index];
+
+      chargeMergeWork(state);
 
       if (!_hasOwnProperty$1.call(destination, key)) {
         destination[key] = source[key];
@@ -1438,6 +1453,10 @@
 
     if (keyTag === 'tag:yaml.org,2002:merge') {
       if (Array.isArray(valueNode)) {
+        if (valueNode.length > 100) {
+          throwError(state, 'abnormal merge sequence size');
+        }
+
         for (index = 0, quantity = valueNode.length; index < quantity; index += 1) {
           mergeMappings(state, _result, valueNode[index], overridableKeys);
         }
